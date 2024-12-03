@@ -58,7 +58,7 @@ def load_parser(hummingbot: "HummingbotApplication", command_tabs) -> [ThrowingA
     help_parser.set_defaults(func=hummingbot.help)
 
     balance_parser = subparsers.add_parser("balance", help="Display your asset balances across all connected exchanges")
-    balance_parser.add_argument("option", nargs="?", choices=["limit", "paper"], default=None,
+    balance_parser.add_argument("option", nargs="?", choices=["limit", "paper", "threshold"], default=None,
                                 help="Option for balance configuration")
     balance_parser.add_argument("args", nargs="*")
     balance_parser.set_defaults(func=hummingbot.balance)

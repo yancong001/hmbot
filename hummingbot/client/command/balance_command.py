@@ -11,21 +11,27 @@ from hummingbot.client.settings import AllConnectorSettings
 from hummingbot.core.rate_oracle.rate_oracle import RateOracle
 from hummingbot.core.utils.async_utils import safe_ensure_future
 from hummingbot.user.user_balances import UserBalances
+from hummingbot.core.utils.email_helper import send_email
 
 if TYPE_CHECKING:
     from hummingbot.client.hummingbot_application import HummingbotApplication  # noqa: F401
 
 OPTIONS = [
     "limit",
-    "paper"
+    "paper",
+    "threshold"
 ]
 
-
+THRESHOLD = 100
+EMAIL_ADDRESS = ""
 class BalanceCommand:
+    monitor_tag = False
     def balance(self,  # type: HummingbotApplication
                 option: str = None,
                 args: List[str] = None
                 ):
+        global THRESHOLD
+        global EMAIL_ADDRESS
         if threading.current_thread() != threading.main_thread():
             self.ev_loop.call_soon_threadsafe(self.balance, option, args)
             return
@@ -71,6 +77,66 @@ class BalanceCommand:
                 paper_balances[asset] = amount
                 self.notify(f"Paper balance for {asset} token set to {amount}")
                 self.save_client_config()
+            elif option == "threshold":
+                if args is None or len(args) == 0:
+                    self.notify("You have not set any threshold.")
+                    self.notify_balance_threshold_set()
+                    return
+                if len(args) != 2 or validate_decimal(args[0]) is not None or float(args[0]) <= 0:
+                    self.notify("Error: Invalid command arguments")
+                    self.notify_balance_threshold_set()
+                    return
+                THRESHOLD = float(args[0])
+                EMAIL_ADDRESS = args[1]
+                safe_ensure_future(self.monitor_balance())
+
+                self.notify(f"threshold for USDT set to {THRESHOLD}, email_address is {EMAIL_ADDRESS}")
+
+    async def monitor_balance(self):
+        global THRESHOLD
+        global EMAIL_ADDRESS
+        if not self.monitor_tag:
+            self.monitor_tag = True
+            while 1:
+                global_token_symbol = self.client_config_map.global_token.global_token_symbol
+                total_col_name = f"Total ({global_token_symbol})"
+                sum_not_for_show_name = "sum_not_for_show"
+                # self.notify("Updating balances, please wait...")
+                network_timeout = float(self.client_config_map.commands_timeout.other_commands_timeout)
+                try:
+                    all_ex_bals = await asyncio.wait_for(
+                        UserBalances.instance().all_balances_all_exchanges(self.client_config_map), network_timeout
+                    )
+                except asyncio.TimeoutError:
+                    self.notify("\nA network error prevented the balances to update. See logs for more details.")
+                    raise
+                all_ex_avai_bals = UserBalances.instance().all_available_balances_all_exchanges()
+
+                exchanges_total = 0
+
+                for exchange, bals in all_ex_bals.items():
+                    # self.notify(f"\n{exchange}:")
+                    df, allocated_total = await self.exchange_balances_extra_df(exchange, bals,
+                                                                                all_ex_avai_bals.get(exchange, {}))
+                    if df.empty:
+                        pass
+                        # self.notify("You have no balance on this exchange.")
+                    else:
+                        lines = [
+                            "    " + line for line in df.drop(sum_not_for_show_name, axis=1).to_string(index=False).split("\n")
+                        ]
+                        # self.notify("\n".join(lines))
+                        # self.notify(f"\n  Total: {global_token_symbol} "
+                        #             f"{PerformanceMetrics.smart_round(df[total_col_name].sum())}")
+                        allocated_percentage = 0
+                        if df[sum_not_for_show_name].sum() != Decimal("0"):
+                            allocated_percentage = allocated_total / df[sum_not_for_show_name].sum()
+                        # self.notify(f"Allocated: {allocated_percentage:.2%}")
+                        exchanges_total += df[total_col_name].sum()
+                if exchanges_total < THRESHOLD:
+                    self.notify(f'balance now is {exchanges_total}, under threshold {THRESHOLD}, send email to {EMAIL_ADDRESS}')
+                    send_email(f'balance now is {exchanges_total}, under threshold {THRESHOLD}',to_addr_email=[EMAIL_ADDRESS])
+                await asyncio.sleep(30)
 
     async def show_balances(
         self  # type: HummingbotApplication
@@ -197,6 +263,11 @@ class BalanceCommand:
         self.notify("To set a balance limit (how much the bot can use): \n"
                     "    balance limit [EXCHANGE] [ASSET] [AMOUNT]\n"
                     "e.g. balance limit binance BTC 0.1")
+
+    def notify_balance_threshold_set(self):
+        self.notify("To set a balance threshold (how much the bot can monitor): \n"
+                    "    balance threshold [AMOUNT] [EMAIL_ADDRESS]\n"
+                    "e.g. balance threshold 100")
 
     def notify_balance_paper_set(self):
         self.notify("To set a paper account balance: \n"
