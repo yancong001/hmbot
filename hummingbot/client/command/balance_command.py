@@ -267,7 +267,7 @@ class BalanceCommand:
     def notify_balance_threshold_set(self):
         self.notify("To set a balance threshold (how much the bot can monitor): \n"
                     "    balance threshold [AMOUNT] [EMAIL_ADDRESS]\n"
-                    "e.g. balance threshold 100")
+                    "e.g. balance threshold 100 ancona117@163.com")
 
     def notify_balance_paper_set(self):
         self.notify("To set a paper account balance: \n"
